@@ -27,45 +27,63 @@ public class CrabsForDummiesPlugin extends Plugin
 	@Inject
 	private Client client;
 
-	@Inject
-	private CrabsForDummiesConfig config;
-
 	// Track when we're about to equip Elder Maul
 	private int justClickedWield;
+	// Track when we're about to equip something else (to revert to Attack)
+	private int justClickedWieldOther;
 
 	@Override
 	protected void startUp() throws Exception
 	{
 		log.info("Crab stun plugin started");
 		justClickedWield = 0;
+		justClickedWieldOther = 0;
 	}
 
 	@Subscribe
 	public void onGameTick(GameTick event) {
-		// Clear the flag after processing
+		// Clear the flags after processing
 		if (justClickedWield > 0) {
 			justClickedWield--;
+		}
+		if (justClickedWieldOther > 0) {
+			justClickedWieldOther--;
 		}
 	}
 
 	@Subscribe
 	public void onMenuOptionClicked(MenuOptionClicked event) {
-		// Check if player clicked to equip Elder Maul or Dragon Warhammer
-		if ("Wield".equals(event.getMenuOption()) &&
-			(event.getMenuEntry().getTarget().contains("Elder maul") || event.getMenuEntry().getTarget().contains("Dragon warhammer"))) {
-			log.info("Player clicked to equip Elder Maul/Dragon Warhammer");
-			justClickedWield=2;
+		// Check if player clicked to equip something
+		if ("Wield".equals(event.getMenuOption())) {
+			String target = event.getMenuEntry().getTarget();
+
+			// Check if it's Elder Maul or Dragon Warhammer
+			if (target.contains("Elder maul") || target.contains("Dragon warhammer")) {
+				log.info("Player clicked to equip Elder Maul/Dragon Warhammer");
+				justClickedWield = 2;
+				justClickedWieldOther = 0; // Clear the other flag
+			} else {
+				// Player is wielding something else - should revert to Attack priority
+				log.info("Player clicked to equip something else: " + target);
+				justClickedWieldOther = 2;
+				justClickedWield = 0; // Clear the maul flag
+			}
 		}
 	}
 
 	@Subscribe
 	public void onMenuEntryAdded(MenuEntryAdded event) {
-		if (client.getGameState() != GameState.LOGGED_IN || !isInChambers() || !hasMaulEquippedOrAboutTo()) {
+		if (client.getGameState() != GameState.LOGGED_IN || !isInChambers()) {
 			return;
 		}
 
-		// Check if this is a crab and we're adding an Attack option (your working fix!)
-		if ("Attack".equals(event.getOption()) && isCrab(event.getTarget())) {
+		// Check if this is a crab
+		if (!isCrab(event.getTarget())) {
+			return;
+		}
+
+		// Handle prioritizing Smash when we have Elder Maul
+		if ("Attack".equals(event.getOption()) && hasMaulEquippedOrAboutTo() && !shouldRevertToAttack()) {
 			log.info("Swapping Smash to top for crab");
 			log.info(String.valueOf(justClickedWield));
 
@@ -87,7 +105,7 @@ public class CrabsForDummiesPlugin extends Plugin
 				return;
 			}
 
-			// Swap the Smash option to the top position (same logic as original)
+			// Swap the Smash option to the top position
 			MenuEntry smashEntry = menuEntries[smashIdx];
 			MenuEntry topEntry = menuEntries[topIdx];
 
@@ -98,6 +116,18 @@ public class CrabsForDummiesPlugin extends Plugin
 		}
 	}
 
+	private boolean shouldRevertToAttack() {
+		// We should revert to Attack if:
+		// 1. We just clicked to wield something else (non-maul weapon), OR
+		// 2. We don't have a maul equipped and didn't just click to wield one
+		return justClickedWieldOther > 0 || (!hasMaulEquipped() && justClickedWield == 0);
+	}
+
+	private boolean hasMaulEquipped() {
+		ItemContainer equipment = client.getItemContainer(InventoryID.EQUIPMENT);
+		return equipment != null && (equipment.contains(21003) || equipment.contains(13576));
+	}
+
 	private boolean hasMaulEquippedOrAboutTo() {
 		// Check if we just clicked to wield the maul
 		if (justClickedWield > 0) {
@@ -105,8 +135,7 @@ public class CrabsForDummiesPlugin extends Plugin
 		}
 
 		// Check if we already have it equipped
-		ItemContainer equipment = client.getItemContainer(InventoryID.EQUIPMENT);
-		return equipment != null && (equipment.contains(21003) || equipment.contains(13576));
+		return hasMaulEquipped();
 	}
 
 	private boolean isInChambers() {
@@ -134,9 +163,4 @@ public class CrabsForDummiesPlugin extends Plugin
 		return cleanTarget.contains("crab");
 	}
 
-	@Provides
-	CrabsForDummiesConfig provideConfig(ConfigManager configManager)
-	{
-		return configManager.getConfig(CrabsForDummiesConfig.class);
-	}
 }
